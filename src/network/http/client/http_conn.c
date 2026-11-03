@@ -94,7 +94,12 @@ static void * dns_resolve_thread_func(void * arg) {
 
     struct addrinfo hints, * addr_list = NULL;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
+    /* IPv4 only: on networks whose resolver refuses AAAA queries, musl's
+         * getaddrinfo(AF_UNSPEC) waits the full 5 s retry budget and then
+         * returns EAI_AGAIN even though the A record answered in 100 ms
+         * (measured on a real R1: AF_UNSPEC 5.00 s / EAI_AGAIN, AF_INET
+         * 0.11 s / ok). This device has no IPv6 connectivity. */
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
     int rc = getaddrinfo(ctx->host, ctx->port, &hints, &addr_list);
@@ -140,7 +145,12 @@ static int dns_resolve_bounded(const char * host, const char * port, uint32_t ti
         free(ctx);
         struct addrinfo hints;
         memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_UNSPEC;
+        /* IPv4 only: on networks whose resolver refuses AAAA queries, musl's
+         * getaddrinfo(AF_UNSPEC) waits the full 5 s retry budget and then
+         * returns EAI_AGAIN even though the A record answered in 100 ms
+         * (measured on a real R1: AF_UNSPEC 5.00 s / EAI_AGAIN, AF_INET
+         * 0.11 s / ok). This device has no IPv6 connectivity. */
+    hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_protocol = IPPROTO_TCP;
         return getaddrinfo(host, port, &hints, out_result);

@@ -136,9 +136,77 @@ static bool read_response(http_conn_t * conn, int * out_status, body_sink_t * si
  * fixed-size `request` header buffer GET/POST already uses) -- concatenating
  * them into one buffer would mean either a second malloc'd copy of the
  * whole body or an arbitrary size cap neither GET nor POST currently has. */
+
+/* ---- Optional GitHub mirror ------------------------------------------------
+ * GitHub is frequently unreachable from mainland China, which breaks the OTA
+ * check, the plugin store and the emulator store. /usr/data/.compas/
+ * github_mirror.txt may hold a prefix such as "https://gh-proxy.com/"; when it
+ * does, requests to github.com / api.github.com / raw.githubusercontent.com /
+ * codeload.github.com / objects.githubusercontent.com are rewritten to
+ * "<prefix><original url>". The mirror fetches the object server-side and
+ * streams it back, so no redirect handling is needed here.
+ *
+ * An empty file or the word "off" disables the rewrite. The built-in default
+ * is only used when the file is absent, so a user can always opt out. */
+#define GITHUB_MIRROR_CONFIG "/usr/data/.compas/github_mirror.txt"
+#define GITHUB_MIRROR_DEFAULT "https://gh-proxy.com/"
+
+static char s_github_mirror[256];
+static bool s_github_mirror_loaded = false;
+
+static void github_mirror_load(void)
+{
+    if (s_github_mirror_loaded) return;
+    s_github_mirror_loaded = true;
+    snprintf(s_github_mirror, sizeof(s_github_mirror), "%s", GITHUB_MIRROR_DEFAULT);
+
+    FILE * f = fopen(GITHUB_MIRROR_CONFIG, "r");
+    if (!f) return;
+    char line[256];
+    if (fgets(line, sizeof(line), f)) {
+        size_t n = strlen(line);
+        while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' ||
+                     line[n - 1] == ' ' || line[n - 1] == '\t')) {
+            line[--n] = '\0';
+        }
+        if (!strcmp(line, "off") || !strcmp(line, "none")) {
+            s_github_mirror[0] = '\0';
+        } else if (line[0] && (strncmp(line, "http://", 7) == 0 || strncmp(line, "https://", 8) == 0)) {
+            snprintf(s_github_mirror, sizeof(s_github_mirror), "%s", line);
+        }
+    }
+    fclose(f);
+}
+
+/* Returns `url`, or the rewritten form in `out` when the mirror applies. */
+static const char * github_mirror_url(const char * url, char * out, size_t out_size)
+{
+    github_mirror_load();
+    if (!s_github_mirror[0] || !url) return url;
+
+    static const char * const hosts[] = {
+        "https://github.com/",
+        "https://api.github.com/",
+        "https://raw.githubusercontent.com/",
+        "https://codeload.github.com/",
+        "https://objects.githubusercontent.com/",
+    };
+    for (size_t i = 0; i < sizeof(hosts) / sizeof(hosts[0]); i++) {
+        size_t n = strlen(hosts[i]);
+        if (!strncmp(url, hosts[i], n)) {
+            if (snprintf(out, out_size, "%s%s", s_github_mirror, url) >= (int) out_size) return url;
+            return out;
+        }
+    }
+    return url;
+}
+
 static bool do_request(const char * url, bool verify_tls, int * out_status, body_sink_t * sink,
                        uint32_t connect_timeout_ms, uint32_t read_timeout_ms, http_cancel_token_t * cancel,
                        bool post, const char * content_type, const uint8_t * body, size_t body_size) {
+    char mirrored_url[2048];
+    url = github_mirror_url(url, mirrored_url, sizeof(mirrored_url));
+
     bool is_https;
     char host[256], port[16], path[2048];
     if (!http_conn_parse_url(url, &is_https, host, sizeof(host), port, sizeof(port), path, sizeof(path))) {
@@ -744,6 +812,9 @@ static bool http_request_ex_internal(http_request_t * req, http_cancel_token_t *
         resp->error = HTTP_ERR_TIMEOUT;
         return false;
     }
+
+    char mirrored_url[2048];
+    url = github_mirror_url(url, mirrored_url, sizeof(mirrored_url));
 
     bool is_https;
     char host[256], port[16], path[2048];

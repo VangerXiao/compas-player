@@ -81,14 +81,30 @@ static bool plugin_async_download_progress(uint64_t downloaded, uint64_t total, 
 
 /* Collapses headers in place so only the last occurrence of each case-insensitive
  * header name is retained when passed to Lua callbacks. */
+/* Keeps one slot per header name but JOINS repeated values with ", " instead of
+ * dropping all but the last. NetEase hands out MUSIC_U / __csrf / NMTID as three
+ * separate Set-Cookie headers on a successful QR login; dropping the earlier ones
+ * made it impossible for a plugin to capture the login cookie. */
 static void plugin_dedupe_headers_case_insensitive(http_header_t * headers, int * count) {
     int out = 0;
     for (int i = 0; i < *count; i++) {
-        bool superseded = false;
-        for (int j = i + 1; j < *count; j++) {
-            if (strcasecmp(headers[i].name, headers[j].name) == 0) { superseded = true; break; }
+        bool merged = false;
+        for (int j = 0; j < out; j++) {
+            if (strcasecmp(headers[j].name, headers[i].name) == 0) {
+                size_t used = strlen(headers[j].value);
+                size_t add = strlen(headers[i].value);
+                if (used > 0 && used + 2 < sizeof(headers[j].value)) {
+                    headers[j].value[used++] = ',';
+                    headers[j].value[used++] = ' ';
+                }
+                if (used + add >= sizeof(headers[j].value)) add = sizeof(headers[j].value) - used - 1;
+                memcpy(headers[j].value + used, headers[i].value, add);
+                headers[j].value[used + add] = '\0';
+                merged = true;
+                break;
+            }
         }
-        if (superseded) continue;
+        if (merged) continue;
         if (out != i) headers[out] = headers[i];
         out++;
     }
@@ -97,6 +113,10 @@ static void plugin_dedupe_headers_case_insensitive(http_header_t * headers, int 
 
 static void * plugin_async_http_thread_func(void * arg) {
     plugin_async_http_t * req = (plugin_async_http_t *) arg;
+    /* ~53 KB each with the enlarged header slot, so they live on the heap and
+     * are declared here so the function's shared tail can free them. */
+    http_request_t * hreq_p = NULL;
+    http_response_t * hresp_p = NULL;
     if (req->is_download) {
         char temp_path[PATH_MAX];
         /* Defense in depth: l_plugin_download_file_async() already
@@ -147,15 +167,29 @@ static void * plugin_async_http_thread_func(void * arg) {
          * own remote-provider design (see http_client.h's own comment on
          * why this is separate, new code rather than a rework of the
          * do_get()/do_post()-based functions used elsewhere). */
-        http_request_t hreq;
-        memset(&hreq, 0, sizeof(hreq));
-        snprintf(hreq.url, sizeof(hreq.url), "%s", req->url);
-        hreq.method = req->method;
-        memcpy(hreq.headers, req->headers, sizeof(hreq.headers));
-        hreq.header_count = req->header_count;
+        /* http_request_t/http_response_t are ~53 KB each with the larger header
+         * slot; a worker thread has a 128 KB stack, so keep them on the heap. */
+        hreq_p = calloc(1, sizeof(*hreq_p));
+        hresp_p = calloc(1, sizeof(*hresp_p));
+        if (!hreq_p || !hresp_p) {
+            free(hreq_p);
+            free(hresp_p);
+            req->ok = false;
+            req->response_error = "out of memory";
+            atomic_store(&req->done, true);
+            return NULL;
+        }
+        http_request_t * hreq_ref = hreq_p;
+        http_response_t * hresp_ref = hresp_p;
+        (void) hreq_ref; (void) hresp_ref;
+        memset(hreq_p, 0, sizeof(*hreq_p));
+        snprintf(hreq_p->url, sizeof(hreq_p->url), "%s", req->url);
+        hreq_p->method = req->method;
+        memcpy(hreq_p->headers, req->headers, sizeof(hreq_p->headers));
+        hreq_p->header_count = req->header_count;
         if (req->long_header_value) {
-            memcpy(hreq.long_header_name, req->long_header_name, sizeof(hreq.long_header_name));
-            hreq.long_header_value = req->long_header_value;
+            memcpy(hreq_p->long_header_name, req->long_header_name, sizeof(hreq_p->long_header_name));
+            hreq_p->long_header_value = req->long_header_value;
         }
         /* Backward-compat note: the OLD GET path (http_get_to_buffer_
          * limited()) never received request_body at all -- a plugin's
@@ -173,26 +207,27 @@ static void * plugin_async_http_thread_func(void * arg) {
          * the first time just because the field happened to be set. */
         bool method_has_body = req->method == HTTP_METHOD_POST || req->method == HTTP_METHOD_PUT ||
                                 req->method == HTTP_METHOD_PATCH;
-        hreq.body = method_has_body ? req->request_body : NULL;
-        hreq.body_len = method_has_body ? req->request_body_size : 0;
-        hreq.content_type = (method_has_body && req->content_type[0]) ? req->content_type : NULL;
-        hreq.verify_tls = req->verify_tls;
-        hreq.connect_timeout_ms = req->connect_timeout_ms;
-        hreq.read_timeout_ms = req->read_timeout_ms;
-        hreq.total_timeout_ms = req->total_timeout_ms;
-        hreq.max_response_bytes = req->max_response_size;
-        hreq.redirect_limit = req->redirect_limit;
+        hreq_p->body = method_has_body ? req->request_body : NULL;
+        hreq_p->body_len = method_has_body ? req->request_body_size : 0;
+        hreq_p->content_type = (method_has_body && req->content_type[0]) ? req->content_type : NULL;
+        hreq_p->verify_tls = req->verify_tls;
+        hreq_p->connect_timeout_ms = req->connect_timeout_ms;
+        hreq_p->read_timeout_ms = req->read_timeout_ms;
+        hreq_p->total_timeout_ms = req->total_timeout_ms;
+        hreq_p->max_response_bytes = req->max_response_size;
+        hreq_p->redirect_limit = req->redirect_limit;
 
-        http_response_t hresp;
-        req->ok = http_request_ex(&hreq, &req->cancel, &hresp);
-        req->status = hresp.status;
-        req->response_body = hresp.body; /* ownership transferred -- do NOT http_response_free() this; freed via plugin_manager_poll()'s existing free(req->response_body) */
-        req->response_body_size = hresp.body_len;
-        memcpy(req->response_headers, hresp.headers, sizeof(req->response_headers));
-        req->response_header_count = hresp.header_count;
+        req->ok = http_request_ex(hreq_p, &req->cancel, hresp_p);
+        req->status = hresp_p->status;
+        req->response_body = hresp_p->body; /* ownership transferred -- do NOT http_response_free() this; freed via plugin_manager_poll()'s existing free(req->response_body) */
+        req->response_body_size = hresp_p->body_len;
+        memcpy(req->response_headers, hresp_p->headers, sizeof(req->response_headers));
+        req->response_header_count = hresp_p->header_count;
         plugin_dedupe_headers_case_insensitive(req->response_headers, &req->response_header_count);
-        req->response_error = hresp.error;
+        req->response_error = hresp_p->error;
     }
+    if (hreq_p) free(hreq_p);
+    if (hresp_p) free(hresp_p);
     free(req->request_body);
     req->request_body = NULL;
     req->request_body_size = 0;
@@ -632,9 +667,29 @@ void plugin_http_bindings_poll(plugin_http_guarded_call_fn guarded_call,
                  * function doesn't declare. A repeated header name keeps
                  * only the last occurrence (documented in PLUGINS.md). */
                 lua_newtable(req->L);
+                /* Repeated header names (Set-Cookie above all) used to overwrite
+                 * each other, so a plugin only ever saw the LAST cookie of a
+                 * response -- NetEase's QR login hands out MUSIC_U, __csrf and
+                 * NMTID as separate Set-Cookie headers, and losing MUSIC_U makes
+                 * sign-in impossible. Join duplicates with ", " instead, which
+                 * keeps every value while staying a single string per name. */
                 for (int h = 0; h < req->response_header_count; h++) {
-                    lua_pushstring(req->L, req->response_headers[h].value);
-                    lua_setfield(req->L, -2, req->response_headers[h].name);
+                    const char * name = req->response_headers[h].name;
+                    const char * value = req->response_headers[h].value;
+                    lua_getfield(req->L, -1, name);
+                    const char * prev = lua_type(req->L, -1) == LUA_TSTRING
+                                            ? lua_tostring(req->L, -1) : NULL;
+                    if (prev && prev[0]) {
+                        char joined[HTTP_HEADER_VALUE_MAX * 2];
+                        int n = snprintf(joined, sizeof(joined), "%s, %s", prev, value);
+                        lua_pop(req->L, 1);
+                        if (n > 0 && (size_t) n < sizeof(joined)) lua_pushstring(req->L, joined);
+                        else lua_pushstring(req->L, value);
+                    } else {
+                        lua_pop(req->L, 1);
+                        lua_pushstring(req->L, value);
+                    }
+                    lua_setfield(req->L, -2, name);
                 }
                 callback_args = 4;
             } else {

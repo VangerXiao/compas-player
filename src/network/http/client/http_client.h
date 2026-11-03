@@ -8,7 +8,11 @@
 
 #define HTTP_MAX_HEADERS 32
 #define HTTP_HEADER_NAME_MAX 64
-#define HTTP_HEADER_VALUE_MAX 768
+/* 1600: a NetEase MUSIC_U login cookie alone is ~770 characters, and its
+ * "Set-Cookie: MUSIC_U=...; Path=/; Expires=...; HttpOnly" header does not fit
+ * the old 768-byte slot -- the value was silently truncated there, so plugin
+ * QR login could never capture a usable cookie. */
+#define HTTP_HEADER_VALUE_MAX 1600
 /* A long bearer token (an OAuth JWT can reach about 2 KiB) does not fit a
  * header slot. Raising HTTP_HEADER_VALUE_MAX instead would grow every
  * request and response (32 slots each) to about 84 KB, and a worker holds
