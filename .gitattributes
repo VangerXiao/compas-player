@@ -3,3 +3,9 @@
 toolchains/*.tar.xz binary
 # Breeze symbolic SVGs must stay byte-identical, including CRLF in one file.
 assets/bootloader/selector/icons/*.svg -text
+
+# Device/build scripts must stay LF even on a Windows checkout.
+packaging/dual-boot/S20sonix text eol=lf
+packaging/dual-boot/*.sh text eol=lf
+packaging/dual-boot/*.py text eol=lf
+scripts/release/*.sh text eol=lf
