@@ -6,7 +6,7 @@
 #include "../appearance/gui_theme.h"
 #include "../../library/metadata/parsing/metadata.h"
 #include "../../library/metadata/db/metadata_db.h"
-#include "../../library/artwork/albumart/albumart.h"
+#include "../../library/metadata/pinyin.h"
 #include "../assets/assets.h"
 #include <ctype.h>
 #include <limits.h>
@@ -107,7 +107,7 @@ bool library_search_showing_results(search_binding_id_t binding_id) {
  * _GNU_SOURCE defined before <string.h> that this file doesn't set (and
  * musl guards the prototype on it -- confirmed via musl's own string.h).
  * Empty needle matches everything (the "search box is empty" case). */
-static bool search_matches(const char * haystack, const char * needle) {
+static bool search_matches_ascii(const char * haystack, const char * needle) {
     if (!haystack) return false;
     if (!needle || !needle[0]) return true;
     size_t needle_len = strlen(needle);
@@ -117,6 +117,32 @@ static bool search_matches(const char * haystack, const char * needle) {
         if (i == needle_len) return true;
     }
     return false;
+}
+
+/* True when the query could be a run of pinyin initials: letters and digits
+ * only, so "zjl" and "zhou2" qualify while "周杰伦" and "jay chou" do not. */
+static bool needle_looks_like_initials(const char * needle) {
+    if (!needle || !needle[0]) return false;
+    for (const char * p = needle; *p; p++) {
+        if (!isalnum((unsigned char) *p)) return false;
+    }
+    return true;
+}
+
+/* A name matches when its own text contains the query, or -- for a query of
+ * letters/digits against a name that has non-ASCII characters -- when the
+ * name's pinyin initials do. "zjl" then finds 周杰伦 the same way "jay" finds
+ * "Jay Chou". The initials are derived per comparison rather than cached: a
+ * name is a few dozen characters and the table lookup is one array index per
+ * ideograph, which stays well inside a keystroke even for a full library. */
+static bool search_matches(const char * haystack, const char * needle) {
+    if (search_matches_ascii(haystack, needle)) return true;
+    if (!haystack || !needle_looks_like_initials(needle)) return false;
+    if (!pinyin_has_non_ascii(haystack)) return false;
+
+    char initials[128];
+    if (pinyin_initials(haystack, initials, sizeof(initials)) == 0) return false;
+    return search_matches_ascii(initials, needle);
 }
 
 /* Real, live results a search box could plausibly need to show at once --
