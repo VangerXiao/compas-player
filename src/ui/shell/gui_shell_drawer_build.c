@@ -300,25 +300,22 @@ static void quick_drawer_build_toggle_icons(void) {
     refresh_quick_drawer_crossfade_icon();
 }
 
-/* Caption under a row 1 icon. Fixed 12 px (fallback_font_ui_12(), which
- * follows the custom font), not gui_theme_font(GUI_FONT_ROLE_SUBTEXT) -- that
- * role scales with Settings > Font Size (app_font_16 underneath), which is
- * right for reading text but was already too big to fit "Bluetooth" in this
- * 84px-wide slot below its icon even at the default tier, let alone BlindMF.
- * Fixed and non-scaling, same "accessibility-independent" choice
- * build_status_bar() already makes for its own clock/volume/battery faces. */
+/* Caption under a row 1 icon. This build uses
+ * gui_theme_font(GUI_FONT_ROLE_SUBTEXT) rather than the fixed 12 px fallback:
+ * the role renders at 20 px on the default font-size tier, and with the
+ * interface in Chinese these captions are two to four ideographs ("睡眠",
+ * "淡入淡出") that still fit the 84 px slot at that size. Matching every other
+ * label is worth more than the width of an English word this build does not
+ * show by default. Switching the UI back to English makes "Bluetooth" wrap
+ * inside its cell; that trade-off is deliberate, see
+ * notes/quick-drawer-captions.md. The role follows Settings > Font Size
+ * (16 / 20 / 24 px), which is exactly what was wanted. */
 static void quick_drawer_build_toggle_name(int i, int32_t x, const char * text) {
     lv_obj_t * name = lv_label_create(quick_drawer);
     quick_drawer_toggle_name[i] = name;
     lv_label_set_text(name, text);
     lv_obj_add_style(name, &style_theme_text_primary, 0);
-    lv_obj_set_style_text_font(name,
-#if defined(BOARD_TEMPOTEC_V1)
-                               gui_theme_font(GUI_FONT_ROLE_SUBTEXT),
-#else
-                               fallback_font_ui_12(),
-#endif
-                               0);
+    lv_obj_set_style_text_font(name, gui_theme_font(GUI_FONT_ROLE_SUBTEXT), 0);
     lv_obj_set_width(name, QUICK_DRAWER_TOGGLE_CELL_W);
     quick_drawer_size_toggle_caption(name);
     lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
@@ -339,7 +336,7 @@ static void quick_drawer_build_toggle_state(int i, int32_t x) {
     lv_label_set_long_mode(state, LV_LABEL_LONG_DOT);
 #endif
     lv_obj_set_style_text_align(state, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(state, fallback_font_ui_12(), 0);
+    lv_obj_set_style_text_font(state, gui_theme_font(GUI_FONT_ROLE_SUBTEXT), 0);
     lv_obj_align(state, LV_ALIGN_TOP_LEFT, x, quick_drawer_toggle_state_y(QUICK_DRAWER_ROW1_TOP));
     lv_label_set_text(state, TR("Off"));
     lv_obj_set_style_text_color(state, shell_drawer_off_color, 0);
