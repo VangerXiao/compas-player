@@ -64,6 +64,7 @@ void settings_music_build_screens(void);
 void settings_display_build_screens(void);
 void build_factory_reset_popup(void);
 void build_hostname_reboot_popup(void);
+void build_sonix_reboot_popup(void);
 void settings_system_teardown_popups(void);
 void settings_system_teardown_screens(void);
 void settings_power_teardown_screens(void);

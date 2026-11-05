@@ -17,7 +17,18 @@
 #include "../../core/system/logging/db_log.h"
 #include "../../hardware/usb/usb_dac_bridge.h"
 #include <string.h>
+#include <stdio.h>
+#include <unistd.h>
 #include "gui_settings_internal.h"
+
+/* Dual boot: where the SD-card boot hook keeps its marker and the SonixOS root
+ * filesystem. Both live under the CompasOS mount point for the card. */
+#define SONIX_ROOTFS_PATH "/usr/data/mnt/sd_0/sonix/rootfs.squashfs"
+#define SONIX_BOOT_PATH "/usr/data/mnt/sd_0/sonix/boot"
+
+/* The System page builder runs before the row and its helpers are defined. */
+static bool sonix_rootfs_present(void);
+static void sonix_reboot_row_cb(lv_event_t * e);
 
 static lv_obj_t * settings_system_maintenance_screen;
 static lv_obj_t * settings_system_updates_screen;
@@ -353,7 +364,7 @@ static lv_obj_t * build_language_choice_screen(void) {
 }
 
 static lv_obj_t * build_settings_system_screen(void) {
-    pill_list_item_t items[8 + PLUGIN_MAX_SYSTEM_LIST_ITEMS];
+    pill_list_item_t items[9 + PLUGIN_MAX_SYSTEM_LIST_ITEMS];
     items[0] = (pill_list_item_t){ TR("USB Mode"), PILL_ACCESSORY_CHEVRON, false, usb_mode_settings_row_cb, NULL, NULL };
     items[1] = (pill_list_item_t){ TR("Clock"), PILL_ACCESSORY_CHEVRON, false, gui_time_settings_clock_row_cb, NULL, NULL };
     items[2] = (pill_list_item_t){ TR("Language"), PILL_ACCESSORY_CHEVRON, false, language_settings_row_cb, NULL, NULL };
@@ -363,6 +374,12 @@ static lv_obj_t * build_settings_system_screen(void) {
                                     dev_options_row_cb, NULL, NULL };
     items[6] = (pill_list_item_t){ TR("About"), PILL_ACCESSORY_CHEVRON, false, push_screen_slot_cb, NULL, &about_screen };
     int count = 7;
+    /* Only when SonixOS is actually installed on the card: without it the row
+     * would do nothing but fail. */
+    if (sonix_rootfs_present()) {
+        items[count++] = (pill_list_item_t){ TR("Reboot to SonixOS"), PILL_ACCESSORY_CHEVRON, false,
+                                             sonix_reboot_row_cb, NULL, NULL };
+    }
     if (plugin_manager_get_settings_list_item_count() > 0) {
         items[count++] = (pill_list_item_t){ TR("Additional Tools"), PILL_ACCESSORY_CHEVRON, false,
                                              push_screen_slot_cb, NULL, &settings_tools_screen };
@@ -442,6 +459,54 @@ void build_hostname_reboot_popup(void) {
         hostname_reboot_later_cb, &hostname_reboot_popup.backdrop);
 }
 
+/* ---- Dual boot: hand the next boot to SonixOS ---------------------------
+ * The SD-card boot hook on the CompasOS side (S20sonix) switches to SonixOS
+ * only when /sonix/boot exists on the card. SonixOS leaves that marker alone
+ * when it restarts, and clears it -- together with its own boot_compas flag --
+ * when its power menu is asked to come back here. Writing the marker is the
+ * only CompasOS-side step, and the row is only offered when a SonixOS root
+ * filesystem actually sits on the card. */
+static gui_popup_t sonix_reboot_popup;
+
+static bool sonix_rootfs_present(void) { return access(SONIX_ROOTFS_PATH, F_OK) == 0; }
+
+static void sonix_reboot_cancel_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    gui_popup_hide(&sonix_reboot_popup);
+}
+
+static void sonix_reboot_confirm_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    gui_popup_hide(&sonix_reboot_popup);
+    if (reboot_blocked_by_update()) return;
+
+    FILE * f = fopen(SONIX_BOOT_PATH, "w");
+    if (!f) {
+        show_error_toast(TR("Could not write the boot marker"));
+        return;
+    }
+    fclose(f);
+    sync();
+    idle_shutdown_reboot_now();
+}
+
+static void sonix_reboot_row_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (reboot_blocked_by_update()) return;
+    if (!sonix_rootfs_present()) {
+        show_error_toast(TR("No SonixOS system found on the card"));
+        return;
+    }
+    gui_popup_show(&sonix_reboot_popup);
+}
+
+void build_sonix_reboot_popup(void) {
+    sonix_reboot_popup.popup = build_confirm_popup(
+        TR("Reboot into SonixOS?"), LV_LABEL_LONG_WRAP, NULL, NULL, TR("Reboot to SonixOS"), accent_lv_color(),
+        sonix_reboot_confirm_cb, NULL, TR("Cancel"), lv_color_make(160, 160, 160), sonix_reboot_cancel_cb, NULL,
+        sonix_reboot_cancel_cb, &sonix_reboot_popup.backdrop);
+}
+
 /* RFC 952/1123 hostname-label charset -- letters/digits/hyphen only, no
  * leading/trailing hyphen. Real bug caught in review: nothing validated
  * this before it was written straight to /usr/data/hostname_override.txt
@@ -487,6 +552,7 @@ static void hostname_row_cb(lv_event_t * e) {
 void settings_system_teardown_popups(void) {
     gui_popup_teardown(&factory_reset_popup);
     gui_popup_teardown(&hostname_reboot_popup);
+    gui_popup_teardown(&sonix_reboot_popup);
 }
 
 void settings_system_teardown_screens(void) {
