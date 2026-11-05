@@ -1,0 +1,82 @@
+#!/bin/sh
+# Boot Sonix from the SD card when /sonix/boot exists on it.
+#
+# Runs before S21mount_ubifs so CompasOS never mounts /usr/data; Sonix needs
+# that volume untouched. And because Sonix and CompasOS would otherwise both
+# keep their settings in the same UBI volume -- and Sonix reinitialises it,
+# wiping CompasOS's -- Sonix gets its own data directory on the card instead,
+# bind-mounted over /usr/data before the chroot.
+case "$1" in
+start)
+    LOG=
+    log() { [ -n "$LOG" ] && echo "$*" >> "$LOG"; }
+
+    /sbin/mdev -s 2>/dev/null
+
+    i=0
+    while [ ! -b /dev/mmcblk0p1 ] && [ $i -lt 75 ]; do
+        [ $((i % 15)) -eq 0 ] && /sbin/mdev -s 2>/dev/null
+        sleep 0.2
+        i=$((i+1))
+    done
+
+    mkdir -p /tmp/sd
+    ( mount -t exfat /dev/mmcblk0p1 /tmp/sd ) &
+    MPID=$!
+    i=0
+    while [ $i -lt 100 ]; do
+        grep -q ' /tmp/sd ' /proc/mounts && break
+        sleep 0.1
+        i=$((i+1))
+    done
+    if ! grep -q ' /tmp/sd ' /proc/mounts; then
+        kill $MPID 2>/dev/null
+        exit 0
+    fi
+    LOG=/tmp/sd/sonix_hook.log
+    log "=== hook $(date) uptime=$(cat /proc/uptime)"
+
+    # Sonix's power menu "reboot to CompasOS" leaves this flag in its data
+    # directory, which under dual boot is sonix/data on the card. It wins over
+    # the marker: clear both and let CompasOS come up.
+    if [ -f /tmp/sd/sonix/data/boot_compas ]; then
+        log "boot_compas flag found: returning to CompasOS"
+        rm -f /tmp/sd/sonix/data/boot_compas
+        rm -f /tmp/sd/sonix/boot
+        sync
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+
+    if [ ! -f /tmp/sd/sonix/boot ] || [ ! -f /tmp/sd/sonix/rootfs.squashfs ]; then
+        log "no marker, staying in CompasOS"
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+    log "marker present (kept: Sonix boot can be retried)"
+
+    mkdir -p /tmp/sonix
+    if ! mount -t squashfs -o loop,ro /tmp/sd/sonix/rootfs.squashfs /tmp/sonix 2>/dev/null; then
+        log "squashfs mount FAILED"
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+
+    mkdir -p /tmp/sd/sonix/data 2>/dev/null
+    if mount --bind /tmp/sd/sonix/data /tmp/sonix/usr/data 2>/dev/null; then
+        log "sonix data bound to SD (/sonix/data)"
+    else
+        log "sonix data bind FAILED (falls back to internal volume)"
+    fi
+
+    for d in dev proc sys; do
+        mount --move /$d /tmp/sonix/$d 2>/dev/null
+    done
+
+    log "exec chroot"
+    exec chroot /tmp/sonix /linuxrc
+    ;;
+stop)
+    ;;
+esac
+exit 0
