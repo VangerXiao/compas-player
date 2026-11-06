@@ -71,7 +71,14 @@ def main():
     out = []
     for entry in entries:
         if entry.startswith(b"vermagic="):
-            out.append(b"vermagic=" + args.vermagic.encode())
+            # The entry is "vermagic=<version> <flags>": the kernel compares the
+            # whole string, so the flags after the version must survive. Only the
+            # version token is replaced here -- replacing the entire entry makes
+            # the kernel reject every module with "version magic ... should be".
+            value = entry[len(b"vermagic="):]
+            marker = value.find(b" ")
+            rest = value[marker:] if marker >= 0 else b""
+            out.append(b"vermagic=" + args.vermagic.encode() + rest)
             found = True
         else:
             out.append(entry)
