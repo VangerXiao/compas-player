@@ -689,7 +689,11 @@ void quick_drawer_make_toggle_labels(int slot, int32_t x, int32_t row_y,
     quick_drawer_toggle_name[slot] = name;
     lv_label_set_text(name, name_text);
     lv_obj_add_style(name, &style_theme_text_primary, 0);
-    lv_obj_set_style_text_font(name, fallback_font_ui_12(), 0);
+    /* Same choice as the row-1 captions in gui_shell_drawer_build.c: the theme
+     * size, not the fixed 12 px fallback, so an expanded row matches the row
+     * above it. Chinese captions fit; English may wrap, see
+     * notes/quick-drawer-captions.md. */
+    lv_obj_set_style_text_font(name, gui_theme_font(GUI_FONT_ROLE_SUBTEXT), 0);
     lv_obj_set_width(name, QUICK_DRAWER_TOGGLE_CELL_W);
     quick_drawer_size_toggle_caption(name);
 #if defined(BOARD_TEMPOTEC_V1)
@@ -707,7 +711,7 @@ void quick_drawer_make_toggle_labels(int slot, int32_t x, int32_t row_y,
     lv_label_set_long_mode(state, LV_LABEL_LONG_DOT);
 #endif
     lv_obj_set_style_text_align(state, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(state, fallback_font_ui_12(), 0);
+    lv_obj_set_style_text_font(state, gui_theme_font(GUI_FONT_ROLE_SUBTEXT), 0);
     lv_obj_set_pos(state, x,
 #if defined(BOARD_TEMPOTEC_V1)
                    row_y + QUICK_DRAWER_TOGGLE_ICON_PX + BOARD_SCALE_PY(5) +
