@@ -25,6 +25,7 @@ KERNEL=""
 LABEL=""
 OUT="r1.upt"
 BOARD="r1"
+VM="4.4.94-sonix"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -33,6 +34,7 @@ while [ $# -gt 0 ]; do
         --label)  LABEL="$2"; shift 2 ;;
         --out)    OUT="$2"; shift 2 ;;
         --board)  BOARD="$2"; shift 2 ;;
+        --vermagic) VM="$2"; shift 2 ;;
         -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
@@ -60,6 +62,15 @@ make target BOARD="$BOARD" -j"$(nproc 2>/dev/null || echo 4)"
 
 echo "== installing player into the root filesystem"
 install -m 0755 build_target/compas_player_target "$ROOTFS/usr/bin/compas_player"
+
+echo "== module vermagic -> $VM"
+if [ -d "$ROOTFS/module_driver" ]; then
+    for ko in "$ROOTFS"/module_driver/*.ko; do
+        [ -f "$ko" ] || continue
+        packaging/dual-boot/patch_module_vermagic.py "$ko" -o "$ko.new" --vermagic "$VM"
+        mv "$ko.new" "$ko"
+    done
+fi
 
 echo "== packing $OUT"
 packaging/dual-boot/build_image.sh --rootfs "$ROOTFS" --kernel "$KERNEL" --out "$OUT"

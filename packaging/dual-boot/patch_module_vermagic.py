@@ -24,11 +24,16 @@ import subprocess
 import sys
 import tempfile
 
+# objcopy has to understand MIPS ELF; a host binutils built for x86 only will
+# refuse the file with "Unable to recognise the format". Point OBJCOPY at the
+# cross toolchain's objcopy when building on such a host.
+OBJCOPY = os.environ.get("OBJCOPY", "objcopy")
+
 
 def read_modinfo(path):
     tmpdir = tempfile.mkdtemp(prefix="vermagic-")
     out = os.path.join(tmpdir, "modinfo")
-    subprocess.run(["objcopy", "--dump-section", ".modinfo=" + out, path],
+    subprocess.run([OBJCOPY, "--dump-section", ".modinfo=" + out, path],
                    check=True)
     with open(out, "rb") as f:
         data = f.read()
@@ -80,7 +85,7 @@ def main():
     section = os.path.join(tmpdir, "modinfo")
     with open(section, "wb") as f:
         f.write(blob)
-    subprocess.run(["objcopy", "--update-section", ".modinfo=" + section,
+    subprocess.run([OBJCOPY, "--update-section", ".modinfo=" + section,
                     args.output], check=True)
     shutil.rmtree(tmpdir)
 
