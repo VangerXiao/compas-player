@@ -1,4 +1,5 @@
 #include "metadata_db_internal.h"
+#include "../../metadata/pinyin.h"
 
 #include "../../../core/text/utf8_util.h"
 
@@ -347,19 +348,25 @@ int64_t metadata_db_get_group_offset(metadata_db_group_kind_t kind, const char *
     return idx >= 0 ? idx : -1;
 }
 
-/* First byte of the name (group) or title (song) at index, ASCII-lowered;
+/* Bucket letter of the name (group) or title (song) at index, ASCII-lowered;
  * false when the row cannot be read. group_kind < 0 means title order. */
 static bool az_first_char(int group_kind, int index, unsigned char * out) {
-    unsigned char first;
+    char name[TAGCACHE_PATH_MAX] = "";
     if (group_kind >= 0) {
         tagcache_group_t group;
         if (!tagcache_group_at(group_kind, index, &group)) return false;
-        first = (unsigned char)group.name[0];
+        snprintf(name, sizeof(name), "%s", group.name);
     } else {
         tagcache_song_t song;
         if (!tagcache_song_fields_at_title_rank(index, TAGCACHE_FIELD_TITLE, &song)) return false;
-        first = (unsigned char)song.title[0];
+        snprintf(name, sizeof(name), "%s", song.title);
     }
+    /* Bucket by the same key the commit sort wrote the file in, so a Chinese
+     * name lands under the letter of its pinyin initial (稻香 under D) instead
+     * of under '#'. */
+    char key[64];
+    pinyin_sort_key(name, key, sizeof(key));
+    unsigned char first = (unsigned char)(key[0] ? key[0] : name[0]);
     if (first >= 'A' && first <= 'Z') first += 'a' - 'A';
     *out = first;
     return true;

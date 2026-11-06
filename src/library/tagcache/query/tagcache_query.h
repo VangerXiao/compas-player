@@ -24,7 +24,7 @@ static int query_album_name_group(const char *name) {
         else hi = mid;
     }
     tagcache_group_t group;
-    return reader_group_at(TAGCACHE_GROUP_ALBUM, lo, &group) && !ascii_casecmp(group.name, name) ? lo : -1;
+    return reader_group_at(TAGCACHE_GROUP_ALBUM, lo, &group) && tc_collate_compare(group.name, name) == 0 ? lo : -1;
 }
 
 static void query_choose(tagcache_query_t *q, uint32_t category, int key) {
@@ -102,8 +102,8 @@ bool tagcache_query_next(tagcache_query_t *q, int32_t *rank) {
             if (query_nonempty(q->needle) && !query_text_matches(song.title, q->needle) &&
                 (q->domain == TAGCACHE_QUERY_TITLES || !query_text_matches(song.artist, q->needle))) continue;
             if (query_nonempty(q->artist) && !tagcache_artist_matches(song.artist, q->artist)) continue;
-            if (query_nonempty(q->album_artist) && ascii_casecmp(song.album_artist, q->album_artist)) continue;
-            if (query_nonempty(q->album) && ascii_casecmp(song.album, q->album)) continue;
+            if (query_nonempty(q->album_artist) && tc_collate_compare(song.album_artist, q->album_artist)) continue;
+            if (query_nonempty(q->album) && tc_collate_compare(song.album, q->album)) continue;
         }
         *rank = candidate;
         return true;
@@ -132,7 +132,7 @@ void tagcache_query_skip(tagcache_query_t *q, int32_t count) {
 static bool query_album_has_group(int kind, const char *name, int album_rank) {
     tagcache_group_t group;
     if (!reader_group_at(TAGCACHE_GROUP_ALBUM, album_rank, &group)) return false;
-    if (kind == TAGCACHE_GROUP_ALBUM_ARTIST) return !ascii_casecmp(name, group.album_artist);
+    if (kind == TAGCACHE_GROUP_ALBUM_ARTIST) return !tc_collate_compare(name, group.album_artist);
     int32_t ids[32];
     for (int offset = 0; offset < group.song_count;) {
         int n = reader_group_ids(TAGCACHE_GROUP_ALBUM, album_rank, offset, ids, 32);

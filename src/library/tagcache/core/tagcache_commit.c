@@ -59,7 +59,7 @@ static int compare_commit_key(const void *a, const void *b, void *ctx) {
             commit_read_failed = true;
             return (ka->slot > kb->slot) - (ka->slot < kb->slot);
         }
-        c = ascii_casecmp(sa, sb);
+        c = tc_collate_compare(sa, sb);
     }
     return c ? c : (ka->slot > kb->slot) - (ka->slot < kb->slot);
 }

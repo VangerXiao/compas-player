@@ -16,7 +16,7 @@ static int reader_group_name_compare(const char *a, const char *b) {
         return utf8_collate_identity_compare(a, b);
     if (reader_loaded_index_version == 6u)
         return utf8_collate_identity_compare_v6(a, b);
-    return ascii_casecmp(a, b);
+    return tc_collate_compare(a, b);
 }
 
 
@@ -32,6 +32,6 @@ static int reader_group_name_compare(const char *a, const char *b) {
  * fails the build until the number has been considered. */
 _Static_assert(TAGCACHE_MAGIC == 0x54434810 && TAGCACHE_INDEXED_MAGIC == 0x54434811 &&
                TAGCACHE_REFS_VERSION == 1u && TC_QUERY_VERSION == 2u && TC_ALBUM_ORDER_VERSION == 4u &&
-               TC_INDEX_VERSION == 8u,
+               TC_INDEX_VERSION == 9u,
                "bump TAGCACHE_DATABASE_FORMAT (tagcache.h) when a database layout version changes");
 

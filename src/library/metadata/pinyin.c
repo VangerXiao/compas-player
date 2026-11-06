@@ -121,3 +121,36 @@ bool pinyin_is_initials_query(const char * query) {
     }
     return true;
 }
+size_t pinyin_sort_key(const char * text, char * out, size_t out_size) {
+    if (!text || !out || out_size == 0) return 0;
+    if (!pinyin_has_non_ascii(text)) {
+        /* Plain ASCII keeps its own bytes, so its ordering is exactly what it
+         * was before this table existed. */
+        size_t n = strlen(text);
+        if (n >= out_size) n = out_size - 1;
+        memcpy(out, text, n);
+        out[n] = '\0';
+        return n;
+    }
+
+    size_t written = 0;
+    const char * cursor = text;
+    while (*cursor) {
+        unsigned int codepoint = utf8_next(&cursor);
+        char emit = 0;
+        if (codepoint < 0x80) {
+            /* Keep ASCII letters and digits (upper-cased); drop separators so
+             * "AC/DC" and "AC DC" sort alike. */
+            unsigned char c = (unsigned char) codepoint;
+            if (isalnum(c)) emit = (char) toupper(c);
+        } else {
+            unsigned char initial = pinyin_initial_for(codepoint);
+            if (initial) emit = (char) toupper(initial);
+        }
+        if (!emit) continue;
+        if (written + 1 >= out_size) break;
+        out[written++] = emit;
+    }
+    out[written] = '\0';
+    return written;
+}

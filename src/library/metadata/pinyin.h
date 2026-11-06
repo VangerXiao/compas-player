@@ -44,4 +44,12 @@ bool pinyin_is_initials_query(const char * query);
  * match first. */
 bool pinyin_matches(const char * text, const char * needle);
 
+
+/* Build an ASCII sort key for collation: a name with no ideographs is copied
+ * unchanged, otherwise its ideographs become their initials and ASCII letters
+ * and digits are upper-cased (separators dropped). 稻香 -> "DX", 周杰伦 -> "ZJL",
+ * "Jay Chou" -> "Jay Chou" (unchanged). Callers compare keys and fall back to a
+ * plain comparison for the tie. */
+size_t pinyin_sort_key(const char * text, char * out, size_t out_size);
+
 #endif /* PINYIN_H */
