@@ -1,7 +1,18 @@
 #ifndef HIBY_TAGCACHE_QUERY_H
 #define HIBY_TAGCACHE_QUERY_H
 
+/* Pinyin initials, so the search box can match "zjl" against 周杰伦. */
+#include "../../metadata/pinyin.h"
+
 static bool query_nonempty(const char *s) { return s && s[0]; }
+
+/* A name matches the query when the plain case-insensitive substring matches,
+ * or when the query is a run of letters/digits and the name's pinyin initials
+ * contain it. Every needle comparison in this file goes through here. */
+static bool query_text_matches(const char * text, const char * needle) {
+    if (ascii_casestr(text, needle)) return true;
+    return pinyin_matches(text, needle);
+}
 
 static int query_album_name_group(const char *name) {
     int lo = 0, hi = tagcache_group_count(TAGCACHE_GROUP_ALBUM);
@@ -48,10 +59,20 @@ void tagcache_query_begin(tagcache_query_t *q, int domain, const char *needle,
     if (query_nonempty(needle)) {
         q->exact = strlen(needle) <= 3 &&
                    (domain >= 0 || (domain == TAGCACHE_QUERY_SONGS && filters == 0));
+        uint64_t full_count = q->count;
         uint64_t start = 0, count = 0;
         uint32_t category = domain < 0 ? TC_QUERY_SONG_GRAM : TC_QUERY_GROUP0_GRAM + (uint32_t)domain;
         query_needle(category, needle, &start, &count);
-        if (!q->indexed || count < q->count) {
+        if (count == 0 && pinyin_is_initials_query(needle)) {
+            /* The gram index holds no posting for this query, but it may still
+             * be the pinyin initials of a Chinese name, which the index knows
+             * nothing about: scan instead and let the matcher decide. exact
+             * would hand out candidates without matching at all, so it goes
+             * off for this path. */
+            q->indexed = false;
+            q->exact = false;
+            q->count = full_count;
+        } else if (!q->indexed || count < q->count) {
             q->indexed = true;
             q->start = start;
             q->count = count;
@@ -69,7 +90,7 @@ bool tagcache_query_next(tagcache_query_t *q, int32_t *rank) {
         if (q->domain >= 0) {
             tagcache_group_t group;
             if (!reader_group_at(q->domain, candidate, &group)) continue;
-            if (query_nonempty(q->needle) && !ascii_casestr(group.name, q->needle)) continue;
+            if (query_nonempty(q->needle) && !query_text_matches(group.name, q->needle)) continue;
         } else {
             unsigned fields = 0;
             if (query_nonempty(q->needle)) fields |= TAGCACHE_FIELD_TITLE | TAGCACHE_FIELD_ARTIST;
@@ -78,8 +99,8 @@ bool tagcache_query_next(tagcache_query_t *q, int32_t *rank) {
             if (query_nonempty(q->album)) fields |= TAGCACHE_FIELD_ALBUM;
             tagcache_song_t song;
             if (!tagcache_song_fields_at_title_rank(candidate, fields, &song)) continue;
-            if (query_nonempty(q->needle) && !ascii_casestr(song.title, q->needle) &&
-                (q->domain == TAGCACHE_QUERY_TITLES || !ascii_casestr(song.artist, q->needle))) continue;
+            if (query_nonempty(q->needle) && !query_text_matches(song.title, q->needle) &&
+                (q->domain == TAGCACHE_QUERY_TITLES || !query_text_matches(song.artist, q->needle))) continue;
             if (query_nonempty(q->artist) && !tagcache_artist_matches(song.artist, q->artist)) continue;
             if (query_nonempty(q->album_artist) && ascii_casecmp(song.album_artist, q->album_artist)) continue;
             if (query_nonempty(q->album) && ascii_casecmp(song.album, q->album)) continue;

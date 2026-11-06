@@ -3,6 +3,7 @@
 #include "pinyin_table.h"
 
 #include <ctype.h>
+#include <string.h>
 
 unsigned char pinyin_initial_for(unsigned int codepoint) {
     if (codepoint < PINYIN_TABLE_FIRST || codepoint > PINYIN_TABLE_LAST) {
@@ -88,4 +89,35 @@ size_t pinyin_initials(const char * text, char * out, size_t out_size) {
 
     out[written] = '\0';
     return written;
+}
+/* Case-insensitive substring search for an ASCII needle in an ASCII haystack. */
+static bool ascii_contains(const char * hay, const char * needle) {
+    if (!hay || !needle) return false;
+    size_t n = strlen(needle);
+    if (n == 0) return true;
+    for (const char * h = hay; *h; h++) {
+        size_t i = 0;
+        while (i < n && h[i] && tolower((unsigned char) h[i]) == tolower((unsigned char) needle[i])) i++;
+        if (i == n) return true;
+    }
+    return false;
+}
+
+bool pinyin_matches(const char * text, const char * needle) {
+    if (!text || !needle || !needle[0]) return false;
+    for (const char * p = needle; *p; p++) {
+        if (!isalnum((unsigned char) *p)) return false;
+    }
+    if (!pinyin_has_non_ascii(text)) return false;
+
+    char initials[128];
+    if (pinyin_initials(text, initials, sizeof(initials)) == 0) return false;
+    return ascii_contains(initials, needle);
+}
+bool pinyin_is_initials_query(const char * query) {
+    if (!query || !query[0]) return false;
+    for (const char * p = query; *p; p++) {
+        if (!isalnum((unsigned char) *p)) return false;
+    }
+    return true;
 }
