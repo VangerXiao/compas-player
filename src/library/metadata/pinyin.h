@@ -34,4 +34,14 @@ size_t pinyin_initials(const char * text, char * out, size_t out_size);
  * codepoint is outside the compiled table. */
 unsigned char pinyin_initial_for(unsigned int codepoint);
 
+/* True when the query is a run of ASCII letters/digits, i.e. something that
+ * could be a pinyin-initials query. */
+bool pinyin_is_initials_query(const char * query);
+
+/* True when the query, a run of letters/digits, appears in the pinyin initials
+ * of text: needle "zjl" matches 周杰伦. False for an empty/非 alphanumeric query
+ * or a text with no ideographs, so callers can fall back to a plain substring
+ * match first. */
+bool pinyin_matches(const char * text, const char * needle);
+
 #endif /* PINYIN_H */
