@@ -1,6 +1,5 @@
 /* Database directory pinning, file naming, generation refs and pointer, header validation. */
 #include "tagcache_internal.h"
-#include "../../metadata/pinyin.h"
 
 /* db_dir is deliberately the proc-fd path for the directory opened at
  * tagcache_open() time.  The logical path is retained only for detecting a
@@ -51,38 +50,15 @@ int ascii_casecmp(const char * a, const char * b) {
 }
 
 /* Folded byte order matches ascii_casecmp; NUL padding proves equality only when a prefix terminates. */
-static void tc_sort_key(const char * value, char * out, size_t out_size) {
-    pinyin_sort_key(value ? value : "", out, out_size);
-}
-
 bool tagcache_sort_prefix(const char *value, unsigned char *prefix, size_t width) {
     if (!value || !prefix || !width) return false;
     const char *end = memchr(value, '\0', TAGCACHE_PATH_MAX);
     if (!end) return false;
     memset(prefix, 0, width);
-
-    /* The prefix is what the commit sort compares, so it has to encode the
-     * collation order: an ideograph sorts under the initial of its reading
-     * (稻香 under D), which is what lets the A-Z bar jump to a letter for
-     * Chinese names. Pure ASCII names keep their own bytes. */
-    char key[TAGCACHE_PATH_MAX];
-    tc_sort_key(value, key, sizeof(key));
-    size_t length = strlen(key);
+    size_t length = (size_t)(end - value);
     size_t copy = length < width ? length : width;
-    for (size_t i = 0; i < copy; i++) prefix[i] = ascii_fold((unsigned char)key[i]);
+    for (size_t i = 0; i < copy; i++) prefix[i] = ascii_fold((unsigned char)value[i]);
     return true;
-}
-
-/* One collation for every name comparison in this file's users: keys first,
- * then the raw names so that two names sharing a key still order (and, more
- * importantly, still compare unequal). */
-int tc_collate_compare(const char * a, const char * b) {
-    char ka[TAGCACHE_PATH_MAX], kb[TAGCACHE_PATH_MAX];
-    tc_sort_key(a, ka, sizeof(ka));
-    tc_sort_key(b, kb, sizeof(kb));
-    int c = ascii_casecmp(ka, kb);
-    if (c) return c;
-    return ascii_casecmp(a, b);
 }
 
 int tagcache_sort_prefix_compare(const unsigned char *a, const unsigned char *b,

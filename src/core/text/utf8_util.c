@@ -1,4 +1,6 @@
 #include "utf8_util.h"
+/* Hanzi collate by the initial of their reading; see next_primary_byte(). */
+#include "../../library/metadata/pinyin.h"
 #include <string.h>
 
 typedef struct {
@@ -270,6 +272,16 @@ static bool next_primary_byte(collate_iter_t *it, unsigned char *key) {
             else if (c == 0x0131) base = 'i';
             if (base) {
                 *key = (unsigned char)base + 2;
+                return true;
+            }
+            /* An ideograph sorts under the initial of its reading, with the
+             * same +2 offset the Latin letters use, so 稻香 ("dao") lands in
+             * the D block beside "D..." names instead of after the Latin ones
+             * by code point. This is what lets the A-Z bar jump to a letter
+             * for a Chinese library. */
+            unsigned char pinyin_initial = pinyin_initial_for(c);
+            if (pinyin_initial) {
+                *key = (unsigned char)(pinyin_initial + 2);
                 return true;
             }
             lower_nonlatin(&c);

@@ -21,12 +21,8 @@
  * private generation construction may release that lock under the update guard. */
 
 /* Layout version of the on-card database this build writes (the version of its
- * index files). Anything that reads the database must carry a reader for it.
- *
- * 9: names are ordered by the pinyin-aware collation (tagcache_sort_prefix and
- * tc_collate_compare), so an index written by 8 is ordered differently and has
- * to be rebuilt rather than read. */
-#define TAGCACHE_DATABASE_FORMAT 9u
+ * index files). Anything that reads the database must carry a reader for it. */
+#define TAGCACHE_DATABASE_FORMAT 10u
 
 #define TAGCACHE_PATH_MAX 600
 #define TAGCACHE_TAG_MAX 128

@@ -165,7 +165,7 @@ typedef struct {
 
 #define TC_INDEX_VERSION TAGCACHE_DATABASE_FORMAT
 /* Older indexes are rewritten only below this version; v8 only adds the join marks. */
-#define TC_INDEX_MIGRATE_BELOW 7u
+#define TC_INDEX_MIGRATE_BELOW 10u
 
 struct tc_index_meta {
     uint32_t magic;
@@ -239,10 +239,6 @@ static inline void scan_scope_leave(scan_scope_t *scope) {
 uint32_t fnv1a(const char * s, size_t n);
 unsigned char ascii_fold(unsigned char c);
 int ascii_casecmp(const char * a, const char * b);
-/* Pinyin-aware name collation: ideographs compare by the initials of their
- * reading. Every ordered comparison of names must use this, or a binary search
- * over the sorted files would disagree with the order they were written in. */
-int tc_collate_compare(const char * a, const char * b);
 bool tagcache_sort_prefix(const char *value, unsigned char *prefix, size_t width);
 int tagcache_sort_prefix_compare(const unsigned char *a, const unsigned char *b, size_t width, bool *full_compare);
 const char * ascii_casestr(const char * hay, const char * needle);
