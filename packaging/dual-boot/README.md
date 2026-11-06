@@ -50,7 +50,7 @@ entirely once the hook has mounted the card there).
    vermagic is the only gate and rewriting it is enough:
 
    ```sh
-   for ko in rootfs/lib/modules/*.ko; do
+   for ko in rootfs/module_driver/*.ko; do
        packaging/dual-boot/patch_module_vermagic.py "$ko" -o "$ko.new" \
            --vermagic 4.4.94-sonix
        mv "$ko.new" "$ko"
