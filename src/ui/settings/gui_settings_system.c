@@ -22,14 +22,20 @@
 #include <unistd.h>
 #include "gui_settings_internal.h"
 
-/* Dual boot: where the SD-card boot hook keeps its marker and the SonixOS root
- * filesystem. Both live under the CompasOS mount point for the card. */
+/* Dual boot: the card's boot selector (S20switch in the HiByOS rootfs) reads
+ * boot_target.txt and starts the system it names -- "compas", "sonix", or
+ * "stock" to come back to HiByOS. Writing that file is the whole CompasOS side
+ * of a hand-over. The SonixOS root filesystem lives on the same card. */
 #define SONIX_ROOTFS_PATH "/usr/data/mnt/sd_0/sonix/rootfs.squashfs"
-#define SONIX_BOOT_PATH "/usr/data/mnt/sd_0/sonix/boot"
+#define BOOT_TARGET_DIR "/usr/data/mnt/sd_0"
+#define BOOT_TARGET_PATH BOOT_TARGET_DIR "/boot_target.txt"
 
 /* The System page builder runs before the row and its helpers are defined. */
 static bool sonix_rootfs_present(void);
+static bool sd_card_present(void);
+static bool write_boot_target(const char * target);
 static void sonix_reboot_row_cb(lv_event_t * e);
+static void hibyos_reboot_row_cb(lv_event_t * e);
 
 static lv_obj_t * settings_system_updates_screen;
 static lv_obj_t * settings_tools_screen;
@@ -373,11 +379,16 @@ static lv_obj_t * build_settings_system_screen(void) {
     items[3] = (pill_list_item_t){ TR("Plugins"), PILL_ACCESSORY_CHEVRON, false, gui_plugin_manage_row_cb, NULL, NULL };
     items[4] = (pill_list_item_t){ TR("Advanced"), PILL_ACCESSORY_CHEVRON, false, dev_options_row_cb, NULL, NULL };
     int count = 5;
-    /* Only when SonixOS is actually installed on the card: without it the row
-     * would do nothing but fail. */
+    /* Each row is only offered when the hand-over can actually happen: the
+     * SonixOS row needs that system's root filesystem on the card, and both
+     * need the card to write the marker to. */
     if (sonix_rootfs_present()) {
         items[count++] = (pill_list_item_t){ TR("Reboot to SonixOS"), PILL_ACCESSORY_CHEVRON, false,
                                              sonix_reboot_row_cb, NULL, NULL };
+    }
+    if (sd_card_present()) {
+        items[count++] = (pill_list_item_t){ TR("Reboot to HiByOS"), PILL_ACCESSORY_CHEVRON, false,
+                                             hibyos_reboot_row_cb, NULL, NULL };
     }
     if (plugin_manager_get_settings_list_item_count() > 0) {
         items[count++] = (pill_list_item_t){ TR("Additional tools"), PILL_ACCESSORY_CHEVRON, false,
@@ -458,16 +469,28 @@ void build_hostname_reboot_popup(void) {
         hostname_reboot_later_cb, &hostname_reboot_popup.backdrop);
 }
 
-/* ---- Dual boot: hand the next boot to SonixOS ---------------------------
- * The SD-card boot hook on the CompasOS side (S20sonix) switches to SonixOS
- * only when /sonix/boot exists on the card. SonixOS leaves that marker alone
- * when it restarts, and clears it -- together with its own boot_compas flag --
- * when its power menu is asked to come back here. Writing the marker is the
- * only CompasOS-side step, and the row is only offered when a SonixOS root
- * filesystem actually sits on the card. */
+/* ---- Dual boot: hand the next boot to SonixOS or HiByOS -----------------
+ * The card's boot selector (S20switch, in the HiByOS rootfs) starts whatever
+ * system boot_target.txt names, so a hand-over is one small file write plus a
+ * reboot. Each row is offered only when the card is there to write to; the
+ * SonixOS row additionally needs that system's root filesystem on it. */
 static gui_popup_t sonix_reboot_popup;
+static gui_popup_t hibyos_reboot_popup;
 
 static bool sonix_rootfs_present(void) { return access(SONIX_ROOTFS_PATH, F_OK) == 0; }
+static bool sd_card_present(void) { return access(BOOT_TARGET_DIR, F_OK) == 0; }
+
+static bool write_boot_target(const char * target) {
+    FILE * f = fopen(BOOT_TARGET_PATH, "w");
+    if (!f) return false;
+    bool ok = fputs(target, f) >= 0 && fputc('\n', f) != EOF;
+    ok = (fflush(f) == 0) && ok;
+    /* Flush this file rather than the whole card: sync() on an exFAT card
+     * stalls the UI for seconds right when the user expects a reboot. */
+    ok = (fsync(fileno(f)) == 0) && ok;
+    ok = (fclose(f) == 0) && ok;
+    return ok;
+}
 
 static void sonix_reboot_cancel_cb(lv_event_t * e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -478,14 +501,10 @@ static void sonix_reboot_confirm_cb(lv_event_t * e) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     gui_popup_hide(&sonix_reboot_popup);
     if (reboot_blocked_by_update()) return;
-
-    FILE * f = fopen(SONIX_BOOT_PATH, "w");
-    if (!f) {
+    if (!write_boot_target("sonix")) {
         show_error_toast(TR("Could not write the boot marker"));
         return;
     }
-    fclose(f);
-    sync();
     idle_shutdown_reboot_now();
 }
 
@@ -504,6 +523,39 @@ void build_sonix_reboot_popup(void) {
         TR("Reboot into SonixOS?"), LV_LABEL_LONG_WRAP, NULL, NULL, TR("Reboot to SonixOS"), accent_lv_color(),
         sonix_reboot_confirm_cb, NULL, TR("Cancel"), lv_color_make(160, 160, 160), sonix_reboot_cancel_cb, NULL,
         sonix_reboot_cancel_cb, &sonix_reboot_popup.backdrop);
+}
+
+static void hibyos_reboot_cancel_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    gui_popup_hide(&hibyos_reboot_popup);
+}
+
+static void hibyos_reboot_confirm_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    gui_popup_hide(&hibyos_reboot_popup);
+    if (reboot_blocked_by_update()) return;
+    if (!write_boot_target("stock")) {
+        show_error_toast(TR("Could not write the boot marker"));
+        return;
+    }
+    idle_shutdown_reboot_now();
+}
+
+static void hibyos_reboot_row_cb(lv_event_t * e) {
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (reboot_blocked_by_update()) return;
+    if (!sd_card_present()) {
+        show_error_toast(TR("No card to write the boot marker to"));
+        return;
+    }
+    gui_popup_show(&hibyos_reboot_popup);
+}
+
+void build_hibyos_reboot_popup(void) {
+    hibyos_reboot_popup.popup = build_confirm_popup(
+        TR("Reboot into HiByOS?"), LV_LABEL_LONG_WRAP, NULL, NULL, TR("Reboot to HiByOS"), accent_lv_color(),
+        hibyos_reboot_confirm_cb, NULL, TR("Cancel"), lv_color_make(160, 160, 160), hibyos_reboot_cancel_cb, NULL,
+        hibyos_reboot_cancel_cb, &hibyos_reboot_popup.backdrop);
 }
 
 /* RFC 952/1123 hostname-label charset -- letters/digits/hyphen only, no
@@ -552,6 +604,7 @@ void settings_system_teardown_popups(void) {
     gui_popup_teardown(&factory_reset_popup);
     gui_popup_teardown(&hostname_reboot_popup);
     gui_popup_teardown(&sonix_reboot_popup);
+    gui_popup_teardown(&hibyos_reboot_popup);
 }
 
 void settings_system_teardown_screens(void) {
