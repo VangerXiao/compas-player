@@ -269,6 +269,7 @@ void gui_settings_init(void) {
     build_factory_reset_popup();
     build_hostname_reboot_popup();
     build_sonix_reboot_popup();
+    build_hibyos_reboot_popup();
 }
 
 /* For gui_reload.c's in-process UI reload -- deletes every screen this
