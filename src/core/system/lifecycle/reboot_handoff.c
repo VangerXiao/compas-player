@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
 #include <time.h>
@@ -17,6 +18,31 @@ static bool init_is_busybox(void) {
     executable[length] = '\0';
     const char *name = strrchr(executable, '/');
     return strcmp(name ? name + 1 : executable, "busybox") == 0;
+}
+
+/* True when "/" comes from a loop or ram device, which is how the multi-boot
+ * image runs CompasOS: the root filesystem is a squashfs on the card, mounted
+ * through a loop device.
+ *
+ * That matters here because the init answering the request would have to
+ * unmount the medium it is standing on before it can shut down, and that takes
+ * many seconds during which nothing happens on screen. Reboot directly instead;
+ * the card is mounted read-only for the root and sd_fsck repairs it if needed.
+ */
+static bool root_is_loop_backed(void) {
+    FILE * mounts = fopen("/proc/mounts", "r");
+    if (!mounts) return false;
+    bool loop = false;
+    char line[512];
+    while (fgets(line, sizeof line, mounts)) {
+        char device[128], point[128];
+        if (sscanf(line, "%127s %127s", device, point) != 2) continue;
+        if (strcmp(point, "/") != 0) continue;
+        loop = strncmp(device, "/dev/loop", 9) == 0 || strncmp(device, "/dev/ram", 8) == 0;
+        break;
+    }
+    fclose(mounts);
+    return loop;
 }
 
 static void wait_for_init_shutdown(void) {
@@ -47,6 +73,11 @@ reboot_handoff_result_t reboot_request_orderly_shutdown(void (*before_request)(v
     errno = ENOSYS;
     return REBOOT_HANDOFF_UNAVAILABLE;
 #else
+    if (root_is_loop_backed()) {
+        /* Card-rooted: asking init to shut down would stall for seconds. */
+        errno = ENOSYS;
+        return REBOOT_HANDOFF_UNAVAILABLE;
+    }
     if (!init_is_busybox()) {
         errno = ENOSYS;
         return REBOOT_HANDOFF_UNAVAILABLE;
