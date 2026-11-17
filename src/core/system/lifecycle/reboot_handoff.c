@@ -20,14 +20,15 @@ static bool init_is_busybox(void) {
     return strcmp(name ? name + 1 : executable, "busybox") == 0;
 }
 
-/* True when "/" comes from a loop or ram device, which is how the multi-boot
- * image runs CompasOS: the root filesystem is a squashfs on the card, mounted
- * through a loop device.
+/* True when a squashfs is mounted from a loop device, which is how the
+ * multi-boot image runs CompasOS: the root filesystem is a squashfs on the card
+ * reached through a loop device, and the chroot keeps the real mount point
+ * (/tmp/target), so looking for " / " would miss it.
  *
  * That matters here because the init answering the request would have to
  * unmount the medium it is standing on before it can shut down, and that takes
- * many seconds during which nothing happens on screen. Reboot directly instead;
- * the card is mounted read-only for the root and sd_fsck repairs it if needed.
+ * many seconds during which the UI just sits there. Reboot directly instead;
+ * the root is mounted read-only and sd_fsck tidies the card on the next mount.
  */
 static bool root_is_loop_backed(void) {
     FILE * mounts = fopen("/proc/mounts", "r");
@@ -35,11 +36,10 @@ static bool root_is_loop_backed(void) {
     bool loop = false;
     char line[512];
     while (fgets(line, sizeof line, mounts)) {
-        char device[128], point[128];
-        if (sscanf(line, "%127s %127s", device, point) != 2) continue;
-        if (strcmp(point, "/") != 0) continue;
-        loop = strncmp(device, "/dev/loop", 9) == 0 || strncmp(device, "/dev/ram", 8) == 0;
-        break;
+        char device[128], point[128], type[64];
+        if (sscanf(line, "%127s %127s %63s", device, point, type) != 3) continue;
+        if (strncmp(device, "/dev/loop", 9) != 0) continue;
+        if (strcmp(type, "squashfs") == 0) { loop = true; break; }
     }
     fclose(mounts);
     return loop;

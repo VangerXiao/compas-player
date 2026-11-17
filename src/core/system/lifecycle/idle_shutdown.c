@@ -6,6 +6,8 @@
 #include "../../../library/tagcache/core/tagcache.h"
 #include "../../../audio/engine/audio.h"
 #include "reboot_handoff.h"
+
+#include "../hardware/indicators/backlight.h"
 #include "../../../network/bluetooth/control/bluetooth_control.h"
 #include <stdio.h>
 #ifndef HOST_BUILD
@@ -46,6 +48,9 @@ static bool parent_is_bootloader(void) {
 
 bool idle_shutdown_reboot_handoff(void) {
 #ifndef HOST_BUILD
+    /* Dark screen first: the reboot itself can take a moment when the root is a
+     * squashfs on the card, and a frozen bright UI reads as a hang. */
+    backlight_set_screen_on(false);
     bt_control_debug_capture_release(true); /* the supervisor unmounts the card next */
     /* Let the supervisor release the SD card before restarting it. The
      * supervisor recognizes this status as a requested reboot. */
@@ -56,6 +61,7 @@ bool idle_shutdown_reboot_handoff(void) {
     (void)reboot_request_orderly_shutdown(NULL);
     if (reboot(RB_AUTOBOOT) == 0) return true;
     bt_control_debug_capture_resume(true);
+    backlight_set_screen_on(true);
     /* Terminal callers keep saves latched. A caller returning to the live UI
      * must explicitly cancel shutdown after recording the syscall errno. */
     return false;
