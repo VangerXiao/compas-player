@@ -7,10 +7,11 @@
 #include "../../../audio/engine/audio.h"
 #include "reboot_handoff.h"
 
-#include "../hardware/indicators/backlight.h"
-
 #include "../../../network/bluetooth/control/bluetooth_control.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
 #ifndef HOST_BUILD
 #include "../../../bootloader/selector/ui/controller/selector_request.h"
 #endif
@@ -47,13 +48,58 @@ static bool parent_is_bootloader(void) {
 
 #endif
 
+#ifndef HOST_BUILD
+static int saved_brightness = -1;
+#endif
+
+/* Direct backlight writes for the restart path, where the process is about to
+ * exit and the backlight worker thread will never get a chance to run. */
+#ifndef HOST_BUILD
+#define BACKLIGHT_BRIGHTNESS_PATH "/sys/class/backlight/backlight_pwm0/brightness"
+
+static int screen_black_now(void) {
+    char text[8];
+    int saved = -1;
+    int fd = open(BACKLIGHT_BRIGHTNESS_PATH, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        ssize_t n = read(fd, text, sizeof(text) - 1);
+        close(fd);
+        if (n > 0) {
+            text[n] = '\0';
+            saved = atoi(text);
+        }
+    }
+    fd = open(BACKLIGHT_BRIGHTNESS_PATH, O_WRONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        (void) write(fd, "0", 1);
+        close(fd);
+    }
+    return saved;
+}
+
+static void screen_restore_now(int saved) {
+    if (saved <= 0) return;
+    char text[16];
+    int len = snprintf(text, sizeof(text), "%d", saved);
+    if (len <= 0 || len >= (int) sizeof(text)) return;
+    int fd = open(BACKLIGHT_BRIGHTNESS_PATH, O_WRONLY | O_CLOEXEC);
+    if (fd < 0) return;
+    (void) write(fd, text, (size_t) len);
+    close(fd);
+}
+#endif
+
 bool idle_shutdown_reboot_handoff(void) {
 #ifndef HOST_BUILD
     /* Go dark first. Restarting keeps the panel showing its last frame until the
      * bootloader re-initialises it, and the supervisor's card release adds a few
      * seconds on top, so without this the user stares at a frozen UI and reads
-     * it as a hang. Powering off does not need it: the rails drop at once. */
-    backlight_set_screen_on(false);
+     * it as a hang. Powering off does not need it: the rails drop at once.
+     *
+     * Written straight to sysfs, not through the backlight API: that one queues
+     * the brightness for its worker thread, and this process is gone before the
+     * worker can run. */
+    saved_brightness = screen_black_now();
     bt_control_debug_capture_release(true); /* the supervisor unmounts the card next */
     /* Let the supervisor release the SD card before restarting it. The
      * supervisor recognizes this status as a requested reboot. */
@@ -64,7 +110,7 @@ bool idle_shutdown_reboot_handoff(void) {
     (void)reboot_request_orderly_shutdown(NULL);
     if (reboot(RB_AUTOBOOT) == 0) return true;
     bt_control_debug_capture_resume(true);
-    backlight_set_screen_on(true);
+    screen_restore_now(saved_brightness);
     /* Terminal callers keep saves latched. A caller returning to the live UI
      * must explicitly cancel shutdown after recording the syscall errno. */
     return false;
