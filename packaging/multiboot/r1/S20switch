@@ -1,0 +1,153 @@
+#!/bin/sh
+# Multi-boot selector, HiByOS side.
+#
+# The card decides where to go: /boot_target.txt holding "compas", "sonix" or
+# "rockbox" starts that system; anything else (or no card, or a missing image)
+# leaves HiByOS to start normally, so pulling the card is always a way back.
+#
+# Holding a key while the device starts opens the menu, which writes the same
+# marker. Runs before S21mount_ubifs, and takes /dev, /proc and /sys with it
+# into the chroot, so the rest of the stock init cannot start competing
+# services.
+case "$1" in
+start)
+    LOG=
+    log() { [ -n "$LOG" ] && echo "$*" >> "$LOG"; }
+
+    /sbin/mdev -s 2>/dev/null
+
+    # A missing card must not cost a stall at boot: the controller registers
+    # mmcblk0 as soon as it sees one, so if the device is still absent after a
+    # short grace period there is nothing in the slot and nothing to wait for.
+    i=0
+    while [ $i -lt 10 ] && [ ! -e /sys/block/mmcblk0 ]; do
+        sleep 0.1
+        i=$((i+1))
+    done
+    if [ ! -e /sys/block/mmcblk0 ]; then
+        exit 0
+    fi
+
+    # Card present: wait for its partition to show up.
+    i=0
+    while [ ! -b /dev/mmcblk0p1 ] && [ $i -lt 75 ]; do
+        [ $((i % 15)) -eq 0 ] && /sbin/mdev -s 2>/dev/null
+        sleep 0.2
+        i=$((i+1))
+    done
+
+    mkdir -p /tmp/sd
+    ( mount -t exfat /dev/mmcblk0p1 /tmp/sd ) &
+    MPID=$!
+    i=0
+    while [ $i -lt 100 ]; do
+        grep -q ' /tmp/sd ' /proc/mounts && break
+        sleep 0.1
+        i=$((i+1))
+    done
+    if ! grep -q ' /tmp/sd ' /proc/mounts; then
+        kill $MPID 2>/dev/null
+        exit 0
+    fi
+
+    LOG=/tmp/sd/boot_switch.log
+
+    # Holding a key while the device starts opens the system menu. Without a
+    # key it returns at once (status 3), so a normal boot costs nothing. The
+    # menu writes the marker itself.
+    if [ -x /usr/bin/bootmenu ]; then
+        /usr/bin/bootmenu /tmp/sd/boot_target.txt 10 >/dev/null 2>&1
+        log "bootmenu exit=$?"
+    fi
+
+    TARGET=$(tr -d ' \t\r\n' < /tmp/sd/boot_target.txt 2>/dev/null)
+
+    # SonixOS cannot reach the card root from inside its chroot: its data
+    # directory is bound over /usr/data, so it leaves a one-shot flag there
+    # instead. Promote it to the persistent choice and consume it.
+    if [ -f /tmp/sd/sonix/data/boot_compas ]; then
+        rm -f /tmp/sd/sonix/data/boot_compas
+        TARGET=compas
+        printf '%s\n' compas > /tmp/sd/boot_target.txt
+        log "SonixOS asked for CompasOS"
+    elif [ -f /tmp/sd/sonix/data/boot_stock ]; then
+        rm -f /tmp/sd/sonix/data/boot_stock
+        TARGET=stock
+        printf '%s\n' stock > /tmp/sd/boot_target.txt
+        log "SonixOS asked for HiByOS"
+    fi
+
+    log "=== $(date) uptime=$(cat /proc/uptime) target=[$TARGET]"
+
+    case "$TARGET" in
+        compas|sonix|rockbox) ;;
+        *)
+            log "no switch requested; staying in HiByOS"
+            umount /tmp/sd 2>/dev/null
+            exit 0
+            ;;
+    esac
+
+    # Rockbox goes through the official launcher, in this very environment.
+    # That launcher mounts the card, copies rockbox.r1 into /tmp (RAM) and hands
+    # it its libraries from the card, then unmounts the card, syncs and powers
+    # off. Running it from the stock root -- which lives on NAND, not on the
+    # card -- is what lets that shutdown finish: a root filesystem loop-mounted
+    # from the card cannot be flushed and released on the way down.
+    if [ "$TARGET" = rockbox ]; then
+        if [ -x /usr/bin/bootloader.rb ]; then
+            # The launcher creates /data/mnt/sd_0 and mounts the card there.
+            # /data is a symlink to /usr/data, which the stock system mounts
+            # later (S21mount_ubifs); at this point it is still the read-only
+            # directory from the squashfs, so the mkdir would fail and the
+            # launcher would report "Cannot boot Rockbox!". Give it the real
+            # volume, or a tmpfs if the volume will not mount.
+            if ! grep -q ' /usr/data ' /proc/mounts; then
+                if ! /usr/bin/mount_ubifs.sh userdata /usr/data/ >/dev/null 2>&1; then
+                    mount -t tmpfs tmpfs /usr/data 2>/dev/null
+                fi
+            fi
+            mkdir -p /usr/data/mnt/sd_0 2>/dev/null
+            log "exec the Rockbox launcher"
+            umount /tmp/sd 2>/dev/null
+            exec /usr/bin/bootloader.rb
+        fi
+        log "no Rockbox launcher installed; falling back to CompasOS"
+        TARGET=compas
+    fi
+
+    SRC=/tmp/sd/$TARGET/rootfs.squashfs
+    if [ ! -f "$SRC" ]; then
+        log "missing $SRC; staying in HiByOS"
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+
+    mkdir -p /tmp/target
+    if ! mount -t squashfs -o loop,ro "$SRC" /tmp/target 2>/dev/null; then
+        log "squashfs mount of $SRC failed; staying in HiByOS"
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+
+    # Sonix keeps its settings in sonix/data on the card; CompasOS uses the
+    # internal UBI volume, which its own init mounts once it is running.
+    if [ "$TARGET" = sonix ]; then
+        mkdir -p /tmp/sd/sonix/data 2>/dev/null
+        if mount --bind /tmp/sd/sonix/data /tmp/target/usr/data 2>/dev/null; then
+            log "sonix data bound to the card"
+        else
+            log "sonix data bind failed"
+        fi
+    fi
+
+    for d in dev proc sys; do
+        mount --move /$d /tmp/target/$d 2>/dev/null
+    done
+
+    log "exec chroot $TARGET"
+    exec chroot /tmp/target /linuxrc
+    ;;
+stop)
+    ;;
+esac

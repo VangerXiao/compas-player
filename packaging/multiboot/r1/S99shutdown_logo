@@ -1,0 +1,16 @@
+#!/bin/sh
+# Keep the HiBy logo on screen while the system shuts down.
+#
+# Nothing in the stock root filesystem redraws the panel on the way down: the
+# boot image stays only because the player never clears it, and once the player
+# has exited the console takes the framebuffer over and the panel goes blank for
+# the rest of the shutdown. rcK runs every S-script with "stop" in reverse
+# order, so this one runs early and paints the artwork over whatever is there.
+case "$1" in
+start)
+    ;;
+stop)
+    [ -x /usr/bin/cmd_jpeg_display ] && /usr/bin/cmd_jpeg_display /etc/logo.jpeg >/dev/null 2>&1
+    ;;
+esac
+exit 0

@@ -1,0 +1,171 @@
+#!/bin/sh
+# Multi-boot selector for the HiBy R3II 2025, Phase 1 (no boot menu yet).
+#
+# The card decides: /boot_target.txt holding "compas" or "sonix" starts that
+# system from the card. Anything else -- no card, no file, unknown name, a
+# missing or unreadable image -- leaves the stock system to start normally, so
+# there is always a way back without a PC.
+#
+# Safety rules, in order of importance:
+#   * every failure path ends with "exit 0", which continues the stock boot;
+#   * a file called "safe" in the card root forces stock boot, so a card can be
+#     prepared on a PC to rescue a device that would otherwise keep trying;
+#   * only mtd1/mtd2 (kernel/rootfs) are ever written by flashing this image:
+#     the recovery pair (mtd3/mtd4), the boot flag (mtd5) and uboot are never
+#     touched, so the in-system "update via SD card" keeps working.
+case "$1" in
+start)
+    LOG=
+
+    /sbin/mdev -s 2>/dev/null
+
+    # A missing card must not cost a stall at boot.
+    i=0
+    while [ $i -lt 10 ] && [ ! -e /sys/block/mmcblk0 ]; do
+        sleep 0.1
+        i=$((i+1))
+    done
+    [ -e /sys/block/mmcblk0 ] || exit 0
+
+    i=0
+    while [ ! -b /dev/mmcblk0p1 ] && [ $i -lt 75 ]; do
+        [ $((i % 15)) -eq 0 ] && /sbin/mdev -s 2>/dev/null
+        sleep 0.2
+        i=$((i+1))
+    done
+    [ -b /dev/mmcblk0p1 ] || exit 0
+
+    mkdir -p /tmp/sd
+    ( mount -t exfat /dev/mmcblk0p1 /tmp/sd ) &
+    MPID=$!
+    i=0
+    while [ $i -lt 100 ]; do
+        grep -q ' /tmp/sd ' /proc/mounts && break
+        sleep 0.1
+        i=$((i+1))
+    done
+    if ! grep -q ' /tmp/sd ' /proc/mounts; then
+        kill $MPID 2>/dev/null
+        exit 0
+    fi
+
+    LOG=/tmp/sd/boot_switch.log
+    log() { [ -n "$LOG" ] && echo "$*" >> "$LOG"; }
+
+    log "=== $(date) uptime=$(cat /proc/uptime)"
+
+    # Bail-out switch: a plain file named "safe" on the card keeps the stock
+    # system in charge, no matter what boot_target.txt says.
+    if [ -f /tmp/sd/safe ]; then
+        log "safe file found; staying in stock"
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+
+    # Holding a key while the device starts opens the menu, which writes the
+    # marker itself. Without a key it returns at once (status 3), so a normal
+    # boot costs nothing. The wheel navigates, PLAYPAUSE confirms.
+    if [ -x /usr/bin/bootmenu ]; then
+        /usr/bin/bootmenu /tmp/sd/boot_target.txt 10 >/dev/null 2>&1
+        log "bootmenu exit=$?"
+    fi
+
+    # Escape hatch that does not depend on any system booting to its player:
+    # a file named "recovery" on the card writes the kernel2/rootfs2 flag and
+    # reboots, which lands in the recovery system and its card updater.
+    if [ -f /tmp/sd/recovery ]; then
+        log "recovery requested; setting the kernel2 flag"
+        if /usr/bin/bootmode.sh Recovery >/dev/null 2>&1; then
+            log "recovery flag written; rebooting"
+            sync
+            reboot
+        else
+            log "could not write the recovery flag"
+        fi
+    fi
+
+    TARGET=$(tr -d ' \t\r\n' < /tmp/sd/boot_target.txt 2>/dev/null)
+    log "target=[$TARGET]"
+
+    case "$TARGET" in
+        compas|sonix) ;;
+        *)
+            log "no switch requested; staying in stock"
+            umount /tmp/sd 2>/dev/null
+            exit 0
+            ;;
+    esac
+
+    SRC=/tmp/sd/$TARGET/rootfs.squashfs
+    if [ ! -f "$SRC" ]; then
+        log "missing $SRC; staying in stock"
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+
+    mkdir -p /tmp/target
+    if ! mount -t squashfs -o loop,ro "$SRC" /tmp/target 2>/dev/null; then
+        log "squashfs mount of $SRC failed; staying in stock"
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+
+    # The image must look like a HiBy root filesystem before we hand over.
+    if [ ! -x /tmp/target/linuxrc ] && [ ! -e /tmp/target/linuxrc ]; then
+        log "$SRC has no /linuxrc; staying in stock"
+        umount /tmp/target 2>/dev/null
+        umount /tmp/sd 2>/dev/null
+        exit 0
+    fi
+
+    # Where the user data lives depends on the system, and this mirrors the R1
+    # image exactly:
+    #   CompasOS  -> the device's UBI volume. It is a fork of HiByOS, so it reads
+    #                and writes the same layout the stock system does (and its
+    #                init insists on a UBIFS volume).
+    #   SonixOS   -> a directory on the card. It is a different lineage and its
+    #                mount helper can erase and re-create the volume when it does
+    #                not recognise the layout, which is how settings used to get
+    #                lost when switching systems.
+    case "$TARGET" in
+        sonix)
+            mkdir -p /tmp/sd/sonix/data 2>/dev/null
+            if mount --bind /tmp/sd/sonix/data /tmp/target/usr/data 2>/dev/null; then
+                log "sonix data bound to the card"
+            else
+                log "sonix data bind failed"
+            fi
+            ;;
+        *)
+            if ! grep -q ' /tmp/target/usr/data ' /proc/mounts; then
+                if mount_ubifs.sh userdata /tmp/target/usr/data/ >/dev/null 2>&1; then
+                    log "userdata UBI mounted at the target's /usr/data"
+                else
+                    log "userdata UBI mount failed"
+                fi
+            fi
+            ;;
+    esac
+
+    # Both systems mount the card themselves at <data>/mnt/sd_0. It is the same
+    # device this hook already holds, and a second mount of it is refused, which
+    # leaves the player reporting the card as unreadable and unplayable. Move our
+    # mount there instead: one mount, already in the place the player expects.
+    mkdir -p /tmp/target/usr/data/mnt/sd_0 2>/dev/null
+    if mount --move /tmp/sd /tmp/target/usr/data/mnt/sd_0 2>/dev/null; then
+        log "card moved to <target>/usr/data/mnt/sd_0"
+    else
+        log "card move failed; it stays at /tmp/sd"
+    fi
+
+    # Hand /dev, /proc and /sys over so the card system's init can work.
+    for d in dev proc sys; do
+        mount --move /$d /tmp/target/$d 2>/dev/null
+    done
+
+    log "exec chroot $TARGET"
+    exec chroot /tmp/target /linuxrc
+    ;;
+stop)
+    ;;
+esac
