@@ -171,7 +171,8 @@ typedef struct {
 
 #define TC_INDEX_VERSION TAGCACHE_DATABASE_FORMAT
 /* Older indexes are rewritten only below this version; v9 changed the artist split rule. */
-#define TC_INDEX_MIGRATE_BELOW 9u
+/* Older indexes are rewritten only below this version; v8 only adds the join marks. */
+#define TC_INDEX_MIGRATE_BELOW 12u
 
 struct tc_index_meta {
     uint32_t magic;

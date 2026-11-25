@@ -22,7 +22,7 @@
 
 /* Layout version of the on-card database this build writes (the version of its
  * index files). Anything that reads the database must carry a reader for it. */
-#define TAGCACHE_DATABASE_FORMAT 9u
+#define TAGCACHE_DATABASE_FORMAT 12u
 
 #define TAGCACHE_PATH_MAX 600
 #define TAGCACHE_TAG_MAX 128
