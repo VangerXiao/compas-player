@@ -9,3 +9,15 @@ packaging/dual-boot/S20sonix text eol=lf
 packaging/dual-boot/*.sh text eol=lf
 packaging/dual-boot/*.py text eol=lf
 scripts/release/*.sh text eol=lf
+
+# Multi-boot packaging: shell scripts, C sources and Python must reach the build
+# host with LF, or the hook refuses to parse (busybox sh) and the patch helper
+# cannot run. Images stay binary.
+packaging/multiboot/**/*.sh text eol=lf
+packaging/multiboot/**/S20switch text eol=lf
+packaging/multiboot/**/S99shutdown_logo text eol=lf
+packaging/multiboot/**/*.c text eol=lf
+packaging/multiboot/**/*.py text eol=lf
+packaging/multiboot/**/*.conf text eol=lf
+packaging/multiboot/**/*.md text eol=lf
+packaging/multiboot/**/*.png binary
