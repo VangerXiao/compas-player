@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <unistd.h>
 #include <sys/sysmacros.h>
 
 #define MOUNTINFO_PATH "/proc/self/mountinfo"
@@ -73,6 +74,14 @@ static bool options_read_write(const char * opts) {
     return rw;
 }
 
+/* Multi-boot images run this system from the SD card, where the boot hook
+ * provides the data directory as a bind mount of a card folder instead of the
+ * device's UBI volume. The marker is only present in those images, so a normal
+ * installation keeps the stricter UBIFS requirement. */
+static bool data_directory_allowed(void) {
+    return access("/etc/multiboot_data", F_OK) == 0;
+}
+
 /* Returns NULL for a healthy writable UBIFS volume entry, else the reason. */
 static const char * check_entry(const char * f[], size_t n, unsigned dev_major, unsigned dev_minor) {
     size_t sep = MOUNTINFO_SEPARATOR_MIN;
@@ -83,9 +92,11 @@ static const char * check_entry(const char * f[], size_t n, unsigned dev_major, 
     unsigned long minor_num = 0;
     if (!parse_dev_field(f[2], &major_num, &minor_num)) return MOUNTINFO_MALFORMED;
     if (major_num != dev_major || minor_num != dev_minor) return "device mismatch";
-    if (strcmp(f[sep + 1], "ubifs") != 0) return "not ubifs";
-    if (strncmp(f[sep + 2], "ubi", 3) != 0 && strncmp(f[sep + 2], "/dev/ubi", 8) != 0)
-        return "not a ubi volume";
+    if (!data_directory_allowed()) {
+        if (strcmp(f[sep + 1], "ubifs") != 0) return "not ubifs";
+        if (strncmp(f[sep + 2], "ubi", 3) != 0 && strncmp(f[sep + 2], "/dev/ubi", 8) != 0)
+            return "not a ubi volume";
+    }
     if (!options_read_write(f[MOUNTINFO_OPTIONS_INDEX]) || !options_read_write(f[sep + 3]))
         return "mounted read-only";
     return NULL;
