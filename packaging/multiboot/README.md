@@ -75,3 +75,5 @@ Put the `.upt` in the card root and use **Settings -> Firmware update -> via SD
 card**. If the system no longer boots, the recovery system still does: create a
 file named `recovery` in the card root before powering on, or reflash with the
 vendor cloner.
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
