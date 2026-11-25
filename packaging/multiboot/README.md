@@ -40,8 +40,12 @@ recovery system, which can reflash from the card.
 
 The R1 hook binds `sonix/data` over `/usr/data`; that needs Sonix's
 `S21mount_ubifs` to accept *any* mount at that path (upstream tests for
-`" /usr/data ubifs "`). The R3II image carries the same one-line relaxation,
-plus the same check in `S11jpeg_display_shell`.
+`" /usr/data ubifs "`). For an R3II Sonix tree the same relaxation, plus the one
+in the early logo mount, comes from
+
+```sh
+python3 packaging/multiboot/r3ii_2025/patch_sonix_ubifs.py <unsquashed-sonix-rootfs>
+```
 
 ## Building an image
 
